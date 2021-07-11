@@ -1,0 +1,10 @@
+{
+  "fileConfig" : {
+    "fileDerectory": "\\\\Desktop-plc\\share"
+  },
+  "DatabaseSettings" : {
+    "user": "mysql",
+    "pass": "mysql",
+    "driverName": "mysql"
+  }
+}
