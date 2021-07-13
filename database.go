@@ -1,103 +1,108 @@
 package main
 
 import (
-	"bufio"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"io"
-	"os"
+	"io/ioutil"
 )
-// open or create database if not exist
-func createAndOpenDB(name string) (db *sql.DB, err error) {
-	db, err = sql.Open("mysql", "mysql:mysql@tcp(127.0.0.1:3306)/")
-		checkPanicErr(err)
-	defer db.Close()
+// struct for Data login
+type DBSettingsJson struct{
+ 	DBSettings struct{
+	User string 		`json:"user"`
+	Pass string 		`json:"pass"`
+	DriverName string 	`json:"driverName"`
+	DBname string		`json:"DBname"`
+} 						`json:"DatabaseSettings"`
+}
+// struct for Database
 
-	_,err = db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS "+name))
-		checkPanicErr(err)
-	db.Close()
 
-	db, err = sql.Open("mysql", "mysql:mysql@tcp(127.0.0.1:3306)/" + name)
-
-	defer db.Close()
-	return db, err
+// read settings database
+//set in variable
+func readDBSettings()(DBsttngs DBSettingsJson, err error){
+	f,err:=ioutil.ReadFile("loginData.json")
+	checkErr(err)
+	if json.Valid(f){
+		err=json.Unmarshal(f,&DBsttngs)
+		checkErr(err)
+	}
+	return
 }
 
-func createAndOpenTable(nameDB string, nameTable string) (db *sql.DB, err error) {
-	db, err = sql.Open("mysql", "mysql:mysql@tcp(127.0.0.1:3306)/" + nameDB)
+// open or create database if not exist
+func createDBifNotExist(name string) (err error) {
+	// read login Data sql server
+	r,err:=readDBSettings()
+	db, err := sql.Open(r.DBSettings.DriverName, fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/",r.DBSettings.User,r.DBSettings.Pass))
+		checkPanicErr(err)
+	_,err = db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS " + name))
+		checkPanicErr(err)
+	db, err = sql.Open(r.DBSettings.DriverName,
+						fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/%s",r.DBSettings.User,r.DBSettings.Pass,name))
+		checkPanicErr(err)
+	db.Close()
+	return err
+}
+
+
+func createTables() (db *sql.DB, err error) {
+	// read login Data sql server
+	r,err:=readDBSettings()
+	db, err = sql.Open(r.DBSettings.DriverName,
+				fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/%s",r.DBSettings.User,r.DBSettings.Pass,r.DBSettings.DBname))
 	checkPanicErr(err)
-	//defer db.Close()
-	switch nameTable{
-	case "hmi":
+	//switch nameTable{
+	//case "hmi":
 		_,err = db.Exec(
 			"CREATE TABLE IF NOT EXISTS HMI (dt_record  timestamp PRIMARY KEY," +
 				"skip_side VARCHAR(2) NOT NULL, " +
 				"skip_num int UNSIGNED NOT NULL," +
 				"skip_weight double)")
 		checkPanicErr(err)
-	case "files":
+	//case "files":
 		_,err = db.Exec(
 			"CREATE TABLE IF NOT EXISTS FILES (id int(11) PRIMARY KEY AUTO_INCREMENT," +
 				"file text NOT NULL)")
 		checkPanicErr(err)
-	default:
-		panic("Not right table name")
+	//default:
+	//	panic("Not right table name")
 
-	}
+	//}
 	//defer db.Close()
 	return db, err
 }
 
-
-
-func checkPanicErr(err error){
-	if err != nil {
-	panic(err)
-}
-}
-
-func databaseHandler (){
-	// show all files
-	for _,fileName:= range filesPath {
-		fmt.Println(fileName)
-		file, err := os.Open(fileName)
-		checkErr(err)
-		defer file.Close()
-		reader := bufio.NewReader(file)
-		var lines []string
-		lines = nil
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
-					break
-				} else {
-					fmt.Println(err)
-					return
-				}
-			}
-			// убираем со строки \n
-			lines = append(lines, line[0:len(line)-2])
-		}
-		for _, line := range lines {
-			//add lines to structure toDB []dataHMI
-			ParseLine(line)
-		}
-	}
-	fmt.Println(toDB)
-	db, err := sql.Open("mysql", "mysql:mysql@tcp(127.0.0.1:3306)/1")
+func writeDataToHMItable (toDB []dataHMI) (err error){
+		// read login Data sql server
+		r, err := readDBSettings()
+	//fmt.Println(toDB)
+	db, err := sql.Open(r.DBSettings.DriverName,
+		fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/%s",r.DBSettings.User,r.DBSettings.Pass,r.DBSettings.DBname))
 	checkErr(err)
 	defer db.Close()
-	for i, line := range toDB {
-		insert, err := db.Query(
-			fmt.Sprintf("INSERT INTO `HMI` (`dt_record`,`skip_side`,`skip_num`,`skip_weight`) VALUES('%s','%s',%d,%f)",
-				line.DTRecord, line.SkipSide, line.SkipNum, float64(line.SkipWeight)))
+	for _, line := range toDB {
+		_, err := db.Exec("INSERT INTO `HMI` (`dt_record`,`skip_side`,`skip_num`,`skip_weight`) VALUES( ?,? ,?,?)",
+		line.DTRecord, line.SkipSide, line.SkipNum, float64(line.SkipWeight))
 		checkErr(err)
-		insert.Next()
-		fmt.Println(i)
-		// close connection if last record
-		if i==len(toDB)-1{
-			insert.Close()
-		}
 	}
+	return
 }
+func readFilesFromDB() (retFiles []string, err error){
+	r, err := readDBSettings()
+	db, err := sql.Open(r.DBSettings.DriverName,
+		fmt.Sprintf("%s:%s@tcp(127.0.0.1:3306)/%s",r.DBSettings.User,r.DBSettings.Pass,r.DBSettings.DBname))
+	checkErr(err)
+	defer db.Close()
+	rows,err:=db.Query("SELECT `file` FROM `files`" )
+	checkErr(err)
+	var file string
+	for rows.Next(){
+		err=rows.Scan(&file)
+		checkErr(err)
+		retFiles=append(retFiles,file)
+	}
+return
+}
+
+

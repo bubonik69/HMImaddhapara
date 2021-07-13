@@ -1,0 +1,8 @@
+{
+  "DatabaseSettings" : {
+    "user": "mysql",
+    "pass": "mysql",
+    "driverName": "mysql",
+    "DBname" : "HMI"
+  }
+}

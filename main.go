@@ -4,54 +4,87 @@ import (
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"time"
+	_ "time"
 )
 
 
 // variables for work with daatabase
 // dataHMI - data from HMI
 type dataHMI struct {
-	DTRecord string `db:"dt_record"`
-	SkipSide	string `db:"skip_side"`
+	DTRecord string 	`db:"dt_record"`
+	SkipSide	string 	`db:"skip_side"`
 	SkipNum	int64		`db:"skip_num"`
-	SkipWeight float64 `db:"skip_weight"`
+	SkipWeight float64 	`db:"skip_weight"`
 }
+type filesHMI struct {
+	id uint64 `db: " id"`
+	file_name string `db:"file_name"`
+}
+
 var toDB []dataHMI
 var filesPathCurr,filesPath [] string
 func main() {
-	// write names of files in slice
-	createAndOpenDB("batcher_Scale")
-	db1,err:=createAndOpenTable("batcher_Scale","hmi")
-	_,err=db1.Query("INSERT INTO `HMI` (`dt_record`,`skip_side`,`skip_num`,`skip_weight`) VALUES('2021-07-11 18:05:24','l',1,1)")
-	checkErr(err)
-	db2,err:=createAndOpenTable("batcher_Scale","files")
-	_,err=db2.Query("INSERT INTO `FILES` (`file`) VALUES('test1.txt')")
-
+	// read settings for connect to Database from json file
+	r,err:=readDBSettings()
+	// open database / create database if not exist
+	createDBifNotExist(r.DBSettings.DBname)
+	// open table / create table if not exist
+	db,err:=createTables()
 	checkErr(err)
 
+	defer db.Close()
+	// write names of files to slice which need to put in database
+	filesPathCurr,err := getFilesFromDir()
 	checkErr(err)
+	// print all files
+	//db.Close()
+	toDB,err = retStructForDatabase(filesPathCurr)
+	checkErr(err)
+	err=writeDataToHMItable(toDB)
+	checkErr(err)
+	for i:=0; i<len(filesPathCurr); i++ {
+		filesPathCurr[i]=addSlash(filesPathCurr[i])
+	}
+	for _, value:=range filesPathCurr{
+		_,err=db.Exec(fmt.Sprintf("INSERT INTO `FILES` (`file`) VALUES('%s')",value))
+	}
+
+
 	var i int
-	var newFilesInDir []string
 	ticker := time.NewTicker(time.Minute)
 	for{
 		t:=<-ticker.C
 		// start process once a minute
 		if t.Minute()%1 == 0 {
 			go func() {
-				filesPathCurr,err := configFilePath()
-				fmt.Println(filesPathCurr)
-				fmt.Println(filesPath)
+				newFilesInDir,err := getFilesFromDir()
+				filesInDB,err:=readFilesFromDB()
 				checkErr(err)
-				if len(filesPathCurr)!=len(filesPath){
-					newFilesInDir=diffInSlices(filesPathCurr,filesPath)
+				if len(newFilesInDir)!=len(filesInDB){
+					fmt.Print("you have a new files in directory\n")
+					s:=diffInSlices(newFilesInDir,filesInDB)
+					fmt.Println("added file",s)
+					// add data in database
+					toDB,err = retStructForDatabase(s)
+					checkErr(err)
+					err=writeDataToHMItable(toDB)
+					checkErr(err)
+					// write new files in database
+					for i:=0; i<len(s); i++ {
+						s[i]=addSlash(s[i])
 					}
+					for _, value:=range s{
+						_,err=db.Exec(fmt.Sprintf("INSERT INTO `FILES` (`file`) VALUES('%s')",value))
+					}
+				}
+
 				i+=1
 				fmt.Println(i,"-", time.Now())
-				fmt.Println(newFilesInDir)
 			}()
 			}
 		}
 
 
-	}
+}
 
 
